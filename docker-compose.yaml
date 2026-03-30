@@ -1,0 +1,48 @@
+services:
+  code_server:
+    image: lscr.io/linuxserver/code-server:latest
+    container_name: code-server
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Berlin
+      - PASSWORD=DEIN_STARKES_PASSWORT
+    volumes:
+      - /home/name:/config/workspace
+    ports:
+      - "8443:8443"
+    restart: unless-stopped
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    restart: unless-stopped
+    ports:
+      - "8558:8554"   # extern 8558 -> intern 8554 (Standard bei MediaMTX)
+   start_period: 10s
+  
+  cam2_publisher:
+    image: ghcr.io/blakeblackshear/frigate:stable-tensorrt-jp4
+    container_name: cam2_publisher
+    restart: unless-stopped
+    depends_on:
+      - mediamtx
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+          while true; do
+            echo "[cam2_publisher] starting ffmpeg..."
+            ffmpeg -hide_banner -loglevel warning \
+              -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 \
+              -rw_timeout 5000000 -timeout 5000000 \
+              -fflags +nobuffer+genpts+discardcorrupt \
+              -flags low_delay \
+              -err_detect ignore_err \
+              -use_wallclock_as_timestamps 1 \
+              -analyzeduration 0 -probesize 32k \
+              -f mpjpeg -i "http://192.168.1.175:8080/" \
+              -an -vf "fps=8,scale=640:480" \
+              -c:v libx264 -preset ultrafast -tune zerolatency -g 20 -keyint_min 20 -pix_fmt yuv420p \
+              -f rtsp -rtsp_transport tcp "rtsp://mediamtx:8554/cam2_door_h264" || true
+            echo "[cam2_publisher] ffmpeg exited - restarting in 2s..."
+            sleep 2
+          done
